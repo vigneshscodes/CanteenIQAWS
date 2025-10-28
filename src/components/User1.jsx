@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Logo from "../assets/logofinalbg0.png";
 import { ArrowRight, Search, X } from "lucide-react";
-import { Link } from "react-router-dom";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export default function User1() {
-  let tokenCounter = 1;
+  const tokenCounterRef = useRef(1); // persisted token counter
   const sections = [
     { title: "Items List", id: "items" },
     { title: "Best Selling", id: "best" },
@@ -27,49 +26,50 @@ export default function User1() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedType, setSelectedType] = useState("");
 
-  // Fetch items from backend
+  // Fetch items
   useEffect(() => {
     fetch("http://localhost:5000/api/items")
       .then((res) => res.json())
       .then((data) => {
-        setItems(data);
-        setFilteredItems(data);
+        setItems(data || []);
+        setFilteredItems(data || []);
       })
       .catch((err) => console.error("Error fetching items:", err));
   }, []);
 
-  // Fetch previous orders for this user
- useEffect(() => {
-  if (!user?.email) return;
+  // Fetch previous orders for this user (server expects userEmail query)
+  useEffect(() => {
+    if (!user?.email) return;
 
-  fetch(`http://localhost:5000/api/orders?userEmail=${user.email}`)
-  .then(res => {
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-    return res.json();
-  })
-  .then(data => setOrders(data))
-  .catch(err => console.error("Error fetching orders:", err));
-
-}, [user]);
-
-
+    fetch(`http://localhost:5000/api/orders?userEmail=${encodeURIComponent(user.email)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        // Normalize server order shape into frontend-friendly shape
+        const normalized = (data || []).map((o, idx) => normalizeOrderFromServer(o));
+        setOrders(normalized);
+      })
+      .catch((err) => console.error("Error fetching orders:", err));
+  }, [user]);
 
   // Search
   const handleSearch = () => {
     const query = searchTerm.toLowerCase().trim();
     if (!query) setFilteredItems(items);
-    else setFilteredItems(items.filter((item) => item.name.toLowerCase().includes(query)));
+    else setFilteredItems(items.filter((item) => (item.name || "").toLowerCase().includes(query)));
   };
 
   // Add to cart
   const confirmAddToCart = () => {
     if (!selectedItem) return;
     const itemWithQty = { ...selectedItem, quantity };
-    setCartItems([...cartItems, itemWithQty]);
+    setCartItems((prev) => [...prev, itemWithQty]);
     setShowQtyModal(false);
   };
 
-  const removeFromCart = (id) => setCartItems(cartItems.filter((item) => item.id !== id));
+  const removeFromCart = (id) => setCartItems((prev) => prev.filter((item) => item.id !== id));
 
   // Checkout
   const checkout = () => {
@@ -83,83 +83,119 @@ export default function User1() {
     setShowPaymentModal(true);
   };
 
-  // Confirm Payment & Place Order
-const confirmPayment = async () => {
-  const total = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  // Confirm Payment & Place Order (adapted to server: send userEmail, items, total)
+  const confirmPayment = async () => {
+    const total = cartItems.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
 
-  try {
-    if (!user) return alert("User not found.");
+    try {
+      if (!user?.email) return alert("User not found.");
 
-    // Create Order
-    const orderData = {
-  userId: user.id,
-  items: cartItems.map(item => ({
-    itemid: item.id,
-    name: item.name,
-    price: item.price,
-    quantity: item.quantity,
-    imgurl: item.imgurl,
-  })),
-  totalamt: total,
-  ordertype: selectedType, // "DineIn" or "Parcel"
-  status: "Pending",
-  counterno: Math.floor(Math.random() * 5) + 1, // 1 to 5
-  tokenno: tokenCounter++, // sequential
-  expectedDelvtime: new Date(Date.now() + 10*60000), // 10 minutes later
-  otp: Math.floor(1000 + Math.random() * 9000).toString() // 4-digit OTP
-};
-console.log(orderData.items);
+      // Prepare items for server (keep important fields)
+      const itemsForServer = cartItems.map((item) => ({
+        itemid: item.id ?? item.itemid ?? item._id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        imgurl: item.imgurl,
+      }));
 
-    const res = await fetch("http://localhost:5000/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(orderData),
-    });
-    const order = await res.json();
+      // Server expects { userEmail, items, total }
+      const payload = {
+        userEmail: user.email,
+        items: itemsForServer,
+        total,
+        // you can optionally include extra fields; server currently ignores them
+      };
 
-    // Reduce item quantities
-    await Promise.all(cartItems.map(item =>
-      fetch(`http://localhost:5000/api/items/${item.id}`, {
-        method: "PUT",
+      const res = await fetch("http://localhost:5000/api/orders", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ availableQty: item.availableQty - item.quantity }),
-      })
-    ));
+        body: JSON.stringify(payload),
+      });
 
-    // Create Transaction
-    await fetch("http://localhost:5000/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        orderID: order.id,
-        userID: user.id,
-        amount: total,
-      }),
-    });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Order API failed: ${res.status} ${text}`);
+      }
 
-    setOrders([...orders, order]);
-    setCartItems([]);
-    setShowPaymentModal(false);
-    alert("Order placed successfully!");
-  } catch (err) {
-    console.error(err);
-    alert("Something went wrong.");
+      const json = await res.json();
+      // server responds with { message: "Order created", order: newOrder } according to your server.js
+      const serverOrder = json.order || json; // defensive
+
+      // Reduce item quantities locally and on server
+      await Promise.all(
+        cartItems.map((item) =>
+          fetch(`http://localhost:5000/api/items/${item.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ availableQty: (item.availableQty ?? 0) - item.quantity }),
+          })
+        )
+      );
+
+      // Create transaction on server
+      await fetch("http://localhost:5000/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderID: serverOrder.orderId ?? serverOrder.id ?? Date.now().toString(),
+          userID: user.id ?? user.email,
+          amount: total,
+        }),
+      });
+
+      // Create a normalized frontend order object so UI keeps working (fills in missing server fields)
+      const normalized = normalizeOrderFromServer({
+        ...serverOrder,
+        // augment with extra UI fields
+        ordertype: selectedType || serverOrder.ordertype || "DineIn",
+        status: serverOrder.status || "Pending",
+        tokenno: tokenCounterRef.current,
+        counterno: serverOrder.counterno ?? Math.floor(Math.random() * 5) + 1,
+        expectedDelvtime: serverOrder.expectedDelvtime ?? new Date(Date.now() + 10 * 60000).toISOString(),
+        otp: serverOrder.otp ?? Math.floor(1000 + Math.random() * 9000).toString(),
+      });
+
+      tokenCounterRef.current += 1;
+
+      setOrders((prev) => [...prev, normalized]);
+      setCartItems([]);
+      setShowPaymentModal(false);
+      alert("Order placed successfully!");
+    } catch (err) {
+      console.error(err);
+      alert("Something went wrong while placing order.");
+    }
+  };
+
+  // Normalizer to adapt DynamoDB server order shape to UI expectations
+  function normalizeOrderFromServer(order) {
+    // server uses orderId; your UI previously expected id/orderno/ordertype/etc.
+    const id = order.orderId ?? order.id ?? order.OrderId ?? String(order.createdAt ?? Date.now());
+    // create a display order number
+    const orderno = order.orderno ?? order.orderNo ?? order.orderId ?? id;
+    return {
+      id,
+      orderId: id,
+      orderno,
+      ordertype: order.ordertype ?? order.ordertype ?? "DineIn",
+      status: order.status ?? "Pending",
+      counterno: order.counterno ?? null,
+      tokenno: order.tokenno ?? null,
+      expectedDelvtime: order.expectedDelvtime ?? order.createdAt ?? new Date().toISOString(),
+      otp: order.otp ?? null,
+      items: order.items ?? order.Items ?? [],
+      total: order.total ?? order.totalamt ?? 0,
+      createdAt: order.createdAt ?? new Date().toISOString(),
+    };
   }
-};
-
-
-
 
   // Card Component
   const Card = ({ item, buttonLabel, buttonColor, buttonHover, showPrice = true, onClick }) => (
     <div className="flex-shrink-0 bg-[#e5b141]/30 border border-[#b94419]/20 rounded-2xl p-4 w-52 text-center shadow-lg transform hover:scale-95 transition-transform duration-200">
       {item.imgurl && (
-  <img
-    src={item.imgurl}
-    alt={item.name}
-    className="w-full h-32 object-cover rounded-xl mb-3"
-  />
-)}
+        <img src={item.imgurl} alt={item.name} className="w-full h-32 object-cover rounded-xl mb-3" />
+      )}
 
       <h3 className="font-semibold text-[#56473a]">{item.name}</h3>
       {showPrice && <p className="text-[#199b74] font-bold">₹{item.price}</p>}
@@ -200,7 +236,7 @@ console.log(orderData.items);
           <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder="Search item..."id
+              placeholder="Search item..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="px-4 py-2 rounded-full border border-[#b94419]/30 focus:outline-none focus:ring-2 focus:ring-[#199b74]"
@@ -215,26 +251,25 @@ console.log(orderData.items);
         </div>
 
         <div className="flex overflow-x-auto gap-6 pb-4 no-scrollbar">
-  <div className="flex gap-6 overflow-visible">
-    {Array.isArray(filteredItems) && filteredItems.map(item => (
-  <Card
-    key={item.id} // use MongoDB _id or any unique value
-    item={item}
-    buttonLabel="Add to Cart"
-    buttonColor="bg-[#199b74]"
-    buttonHover="bg-[#b94419]"
-    onClick={() => {
-      setSelectedItem(item);
-      setQuantity(1);
-      setShowQtyModal(true);
-    }}
-  />
-    ))}
+          <div className="flex gap-6 overflow-visible">
+            {Array.isArray(filteredItems) && filteredItems.map((item) => (
+              <Card
+                key={item.id ?? item._id ?? item.itemid}
+                item={item}
+                buttonLabel="Add to Cart"
+                buttonColor="bg-[#199b74]"
+                buttonHover="bg-[#b94419]"
+                onClick={() => {
+                  setSelectedItem(item);
+                  setQuantity(1);
+                  setShowQtyModal(true);
+                }}
+              />
+            ))}
 
-    {!Array.isArray(filteredItems) && <p>No items available.</p>}
-  </div>
-</div>
-
+            {!Array.isArray(filteredItems) && <p>No items available.</p>}
+          </div>
+        </div>
       </section>
 
       {/* Best Selling */}
@@ -244,7 +279,7 @@ console.log(orderData.items);
           <div className="flex gap-6 overflow-visible">
             {items.slice(0, 5).map((item) => (
               <Card
-                key={item.id}
+                key={item.id ?? item._id ?? item.itemid}
                 item={item}
                 buttonLabel="Add to Cart"
                 buttonColor="bg-[#199b74]"
@@ -266,12 +301,12 @@ console.log(orderData.items);
         <div className="flex overflow-x-auto gap-6 pb-4 no-scrollbar">
           <div className="flex gap-6 overflow-visible">
             {orders.slice(-5).map((order) =>
-              order.items?.map((item) => (
+              (order.items || []).map((item) => (
                 <Card
-                  key={item.itemid} // or item._id if present
+                  key={item.itemid ?? item.id ?? `${order.id}-${item.name}`}
                   item={{
                     name: item.name,
-                    imgurl: item.imgurl || "", // fallback if imgurl missing
+                    imgurl: item.imgurl || "",
                     price: item.price,
                     availableQty: 1,
                   }}
@@ -295,7 +330,7 @@ console.log(orderData.items);
                 <div>
                   <h3 className="font-bold text-[#56473a]">{item.name}</h3>
                   <p className="text-[#199b74] font-bold">
-                    ₹{item.price} x {item.quantity} = ₹{item.price * item.quantity}
+                    ₹{item.price} x {item.quantity} = ₹{(item.price || 0) * item.quantity}
                   </p>
                 </div>
               </div>
@@ -310,7 +345,7 @@ console.log(orderData.items);
           {cartItems.length > 0 && (
             <div className="mt-4 flex justify-end gap-4 items-center">
               <p className="font-bold text-[#56473a]">
-                Total: ₹{cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)}
+                Total: ₹{cartItems.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0)}
               </p>
               <button
                 onClick={checkout}
@@ -325,27 +360,27 @@ console.log(orderData.items);
 
       {/* Orders to Pick */}
       <section id="current" className="px-10 py-8">
-  <h2 className="text-2xl font-bold text-[#56473a] mb-4">Orders to Pick</h2>
-  <div className="flex flex-wrap gap-6 justify-center">
-    {orders
-      .filter(order => order.status === "Pending") // only show pending orders
-      .map(order => (
-        <Link key={order.id} to={`/user2/${order.id}`}>
-          <div className="bg-[#dbd9d5] border border-[#b94419]/30 rounded-2xl p-5 w-72 flex justify-between items-center shadow-lg hover:bg-[#e5b141]/30 transition">
-            <div>
-              <h3 className="font-bold text-[#56473a]">Order #{order.orderno}</h3>
-              <p className="text-[#199b74] text-sm">
-                {order.items?.length || 0} Items
-              </p>
-              <p className="text-[#56473a]/80 text-xs italic">{order.ordertype}</p>
-            </div>
-            <ArrowRight className="text-[#b94419] w-6 h-6" />
-          </div>
-        </Link>
-      ))}
-  </div>
-</section>
+        <h2 className="text-2xl font-bold text-[#56473a] mb-4">Orders to Pick</h2>
+        <div className="flex flex-wrap gap-6 justify-center">
+          {orders
+            .filter((order) => order.status === "Pending" || !order.status)
+            .map((order) => (
+              <Link key={order.orderno} to={`/user2/${order.orderno}`}>
 
+                <div className="bg-[#dbd9d5] border border-[#b94419]/30 rounded-2xl p-5 w-72 flex justify-between items-center shadow-lg hover:bg-[#e5b141]/30 transition">
+                  <div>
+                    <h3 className="font-bold text-[#56473a]">Token Order No: #{order.tokenno}</h3>
+                    <p className="text-[#199b74] text-sm">
+                      {order.items?.length || 0} Items
+                    </p>
+                    <p className="text-[#56473a]/80 text-xs italic">{order.ordertype}</p>
+                  </div>
+                  <ArrowRight className="text-[#b94419] w-6 h-6" />
+                </div>
+              </Link>
+            ))}
+        </div>
+      </section>
 
       {/* Quantity Modal */}
       {showQtyModal && selectedItem && (

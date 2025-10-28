@@ -2,34 +2,75 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
-import Item from "./models/Item.js"; // ES module
 import jwt from "jsonwebtoken";
 import { ddb } from "./db/db.js"; // DynamoDB client
-import { GetCommand, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 dotenv.config();
-
 const app = express();
+
+// =======================
+// MIDDLEWARE
+// =======================
 app.use(cors());
 app.use(express.json());
 
 // =======================
-// USERS SIGNUP
+// JWT AUTH MIDDLEWARE
+// =======================
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Access denied. No token." });
+
+  try {
+    const verified = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = verified;
+    next();
+  } catch (err) {
+    res.status(400).json({ message: "Invalid token" });
+  }
+};
+
+// =======================
+// USER SIGNUP
 // =======================
 app.post("/api/users", async (req, res) => {
   try {
     const { fullname, contactnumber, email, password } = req.body;
 
-    const existingUser = await ddb.send(new GetCommand({ TableName: "users", Key: { email } }));
-    if (existingUser.Item) return res.status(400).json({ message: "User with this email already exists" });
+    if (!fullname || !contactnumber || !email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const existingUser = await ddb.send(
+      new GetCommand({ TableName: "users", Key: { email } })
+    );
+    if (existingUser.Item) {
+      return res.status(400).json({ message: "User already exists" });
+    }
 
     const passwordhash = await bcrypt.hash(password, 10);
 
-    const newUser = { email, fullname, contactnumber, passwordhash, createdat: new Date().toISOString(), lastlogin: null };
+    const newUser = {
+      email,
+      fullname,
+      contactnumber,
+      passwordhash,
+      createdat: new Date().toISOString(),
+      lastlogin: null,
+    };
 
     await ddb.send(new PutCommand({ TableName: "users", Item: newUser }));
 
-    res.status(201).json({ message: "Signup successful", user: { email, fullname, contactnumber } });
+    res.status(201).json({
+      message: "Signup successful",
+      user: { email, fullname, contactnumber },
+    });
   } catch (err) {
     console.error("Error in /api/users:", err);
     res.status(500).json({ message: "Server error" });
@@ -37,12 +78,14 @@ app.post("/api/users", async (req, res) => {
 });
 
 // =======================
-// USERS LOGIN
+// USER LOGIN
 // =======================
 app.post("/api/users/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await ddb.send(new GetCommand({ TableName: "users", Key: { email } }));
+    const result = await ddb.send(
+      new GetCommand({ TableName: "users", Key: { email } })
+    );
 
     const user = result.Item;
     if (!user) return res.status(400).json({ message: "Invalid email or password" });
@@ -50,9 +93,29 @@ app.post("/api/users/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.passwordhash);
     if (!isMatch) return res.status(400).json({ message: "Invalid email or password" });
 
-    const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: "1d" });
+    const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
 
-    res.json({ message: "Login successful", token, user: { email: user.email, fullname: user.fullname, contactnumber: user.contactnumber } });
+    // Update last login timestamp
+    await ddb.send(
+      new UpdateCommand({
+        TableName: "users",
+        Key: { email },
+        UpdateExpression: "set lastlogin = :t",
+        ExpressionAttributeValues: { ":t": new Date().toISOString() },
+      })
+    );
+
+    res.json({
+      message: "Login successful",
+      token,
+      user: {
+        email: user.email,
+        fullname: user.fullname,
+        contactnumber: user.contactnumber,
+      },
+    });
   } catch (err) {
     console.error("Error in /api/users/login:", err);
     res.status(500).json({ message: "Server error" });
@@ -65,8 +128,7 @@ app.post("/api/users/login", async (req, res) => {
 app.get("/api/items", async (req, res) => {
   try {
     const data = await ddb.send(new ScanCommand({ TableName: "items" }));
-    console.log("Items fetched:", data.Items);
-    res.json(data.Items);
+    res.json(data.Items || []);
   } catch (err) {
     console.error("Error in /api/items:", err);
     res.status(500).json({ message: "Server error" });
@@ -77,16 +139,19 @@ app.put("/api/items/:id", async (req, res) => {
   const { id } = req.params;
   const { availableQty } = req.body;
 
-  if (availableQty == null) return res.status(400).json({ message: "availableQty is required" });
+  if (availableQty == null)
+    return res.status(400).json({ message: "availableQty is required" });
 
   try {
-    const result = await ddb.send(new UpdateCommand({
-      TableName: "items",
-      Key: { id }, // DynamoDB key type must match your table (string/number)
-      UpdateExpression: "set availableQty = :qty",
-      ExpressionAttributeValues: { ":qty": availableQty },
-      ReturnValues: "ALL_NEW",
-    }));
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: "items",
+        Key: { id },
+        UpdateExpression: "set availableQty = :qty",
+        ExpressionAttributeValues: { ":qty": availableQty },
+        ReturnValues: "ALL_NEW",
+      })
+    );
 
     res.json({ message: "Item updated", updatedItem: result.Attributes });
   } catch (err) {
@@ -103,13 +168,15 @@ app.get("/api/orders", async (req, res) => {
   if (!userEmail) return res.status(400).json({ message: "userEmail is required" });
 
   try {
-    const result = await ddb.send(new ScanCommand({
-      TableName: "orders",
-      FilterExpression: "userEmail = :email",
-      ExpressionAttributeValues: { ":email": userEmail }
-    }));
+    const result = await ddb.send(
+      new ScanCommand({
+        TableName: "orders",
+        FilterExpression: "userEmail = :email",
+        ExpressionAttributeValues: { ":email": userEmail },
+      })
+    );
 
-    res.json(result.Items);
+    res.json(result.Items || []);
   } catch (err) {
     console.error("Error in /api/orders GET:", err);
     res.status(500).json({ message: "Server error" });
@@ -118,32 +185,67 @@ app.get("/api/orders", async (req, res) => {
 
 app.post("/api/orders", async (req, res) => {
   const { userEmail, items, total } = req.body;
-  if (!userEmail || !items) return res.status(400).json({ message: "userEmail and items are required" });
+  if (!userEmail || !items)
+    return res.status(400).json({ message: "userEmail and items are required" });
 
   try {
     const newOrder = {
-      orderId: Date.now().toString(),
-      userEmail,
-      items,
-      total,
-      createdAt: new Date().toISOString(),
-    };
+  orderno: Date.now(),
+  userEmail,
+  items,
+  total,
+  counterno: Math.floor(Math.random() * 5) + 1,
+  tokenno: Math.floor(Math.random() * 1000),
+  otp: Math.floor(1000 + Math.random() * 9000),
+  expectedDelvtime: new Date(Date.now() + 15 * 60000).toISOString(), // +15min
+  createdAt: new Date().toISOString(),
+};
+
 
     await ddb.send(new PutCommand({ TableName: "orders", Item: newOrder }));
-
     res.status(201).json({ message: "Order created", order: newOrder });
   } catch (err) {
     console.error("Error creating order:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
+// =======================
+// GET SINGLE ORDER BY ID
+// =======================
+app.get("/api/orders/:orderno", async (req, res) => {
+  try {
+    const orderno = Number(req.params.orderno);
+    if (isNaN(orderno)) {
+      return res.status(400).json({ message: "Invalid order number" });
+    }
+
+    const result = await ddb.send(
+      new GetCommand({
+        TableName: "orders",
+        Key: { orderno }, // must match your DynamoDB primary key
+      })
+    );
+
+    if (!result.Item) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.json(result.Item);
+  } catch (err) {
+    console.error("Error in /api/orders/:orderno:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 
 // =======================
 // TRANSACTIONS ROUTE
 // =======================
-app.post("/api/transactions", async (req, res) => {
+app.post("/api/transactions", verifyToken, async (req, res) => {
   const { orderID, userID, amount } = req.body;
-  if (!orderID || !userID || !amount) return res.status(400).json({ message: "Missing transaction data" });
+  if (!orderID || !userID || !amount)
+    return res.status(400).json({ message: "Missing transaction data" });
 
   try {
     const newTransaction = {
@@ -155,7 +257,6 @@ app.post("/api/transactions", async (req, res) => {
     };
 
     await ddb.send(new PutCommand({ TableName: "transactions", Item: newTransaction }));
-
     res.status(201).json(newTransaction);
   } catch (err) {
     console.error("Error in /api/transactions:", err);
@@ -163,5 +264,8 @@ app.post("/api/transactions", async (req, res) => {
   }
 });
 
+// =======================
+// SERVER START
+// =======================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));

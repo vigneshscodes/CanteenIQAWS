@@ -8,6 +8,7 @@ export default function Signup() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [formData, setFormData] = useState({
     name: "",
     contact: "",
@@ -17,8 +18,6 @@ export default function Signup() {
 
   const location = useLocation();
   const navigate = useNavigate();
-
-  // Get role from LandingPage
   const role = location.state?.role || "user";
 
   useEffect(() => {
@@ -29,47 +28,78 @@ export default function Signup() {
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    setFieldErrors({ ...fieldErrors, [e.target.name]: "" }); // clear specific error
+  };
+
+  // ✅ Validation function
+  const validateForm = () => {
+    const errors = {};
+
+    if (!formData.name.trim()) {
+      errors.name = "Full name is required.";
+    } else if (formData.name.trim().length < 3) {
+      errors.name = "Full name must be at least 3 characters.";
+    }
+
+    if (!formData.contact.trim()) {
+      errors.contact = "Contact number is required.";
+    } else if (!/^\d{10}$/.test(formData.contact.trim())) {
+      errors.contact = "Contact number must be exactly 10 digits.";
+    }
+
+    if (!formData.email.trim()) {
+      errors.email = "Email is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      errors.email = "Please enter a valid email address.";
+    }
+
+    if (!formData.password.trim()) {
+      errors.password = "Password is required.";
+    } else if (formData.password.trim().length < 6) {
+      errors.password = "Password must be at least 6 characters.";
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleSignup = async () => {
-  const { name, contact, email, password } = formData;
-
-  // Basic validation
-  if (!name || !contact || !email || !password) {
-    setError("All fields are required.");
-    return;
-  }
-
-  try {
-    const res = await fetch("http://localhost:5000/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fullname: name,
-        contactnumber: contact,
-        email,
-        password,
-      }),
-    });
-
-    if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.message || "Signup failed");
-    }
-
-    setSuccess("Signup successful! Redirecting to login...");
     setError("");
-    setTimeout(() => navigate("/login", { state: { role } }), 2000);
-  } catch (err) {
-    setError(err.message);
     setSuccess("");
-  }
-};
 
+    if (!validateForm()) return; // stop if validation fails
+
+    const { name, contact, email, password } = formData;
+
+    try {
+      const res = await fetch("http://localhost:5000/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullname: name,
+          contactnumber: contact,
+          email,
+          password,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || "Signup failed");
+      }
+
+      setSuccess("Signup successful! Redirecting to login...");
+      setError("");
+      setTimeout(() => navigate("/login", { state: { role } }), 2000);
+    } catch (err) {
+      setError(err.message);
+      setSuccess("");
+    }
+  };
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center font-poppins transition-opacity duration-500 ease-in-out opacity-100"
+      className="min-h-screen flex items-center justify-center font-poppins"
       style={{
         backgroundImage: `url(${LoginBG})`,
         backgroundSize: "cover",
@@ -97,30 +127,52 @@ export default function Signup() {
 
           {role !== "management" && (
             <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-              <input
-                type="text"
-                name="name"
-                placeholder="Full Name"
-                value={formData.name}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
-              />
-              <input
-                type="text"
-                name="contact"
-                placeholder="Contact Number"
-                value={formData.contact}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
-              />
-              <input
-                type="email"
-                name="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={handleChange}
-                className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
-              />
+              {/* Full Name */}
+              <div>
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="Full Name"
+                  value={formData.name}
+                  onChange={handleChange}
+                  className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
+                />
+                {fieldErrors.name && (
+                  <p className="text-red-600 text-sm mt-1">{fieldErrors.name}</p>
+                )}
+              </div>
+
+              {/* Contact Number */}
+              <div>
+                <input
+                  type="text"
+                  name="contact"
+                  placeholder="Contact Number"
+                  value={formData.contact}
+                  onChange={handleChange}
+                  className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
+                />
+                {fieldErrors.contact && (
+                  <p className="text-red-600 text-sm mt-1">{fieldErrors.contact}</p>
+                )}
+              </div>
+
+              {/* Email */}
+              <div>
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="Email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  className="w-full px-4 py-3 rounded-full bg-[#dbd9d5]/50 placeholder-[#56473a]/70 text-[#56473a] outline-none focus:ring-2 focus:ring-[#199b74] shadow-lg transition"
+                />
+                {fieldErrors.email && (
+                  <p className="text-red-600 text-sm mt-1">{fieldErrors.email}</p>
+                )}
+              </div>
+
+              {/* Password */}
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -141,7 +193,11 @@ export default function Signup() {
                     <EyeIcon className="h-5 w-5" />
                   )}
                 </button>
+                {fieldErrors.password && (
+                  <p className="text-red-600 text-sm mt-1">{fieldErrors.password}</p>
+                )}
               </div>
+
               <button
                 type="button"
                 onClick={handleSignup}
