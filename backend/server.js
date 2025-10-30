@@ -198,6 +198,7 @@ app.post("/api/orders", async (req, res) => {
   tokenno: Math.floor(Math.random() * 1000),
   otp: Math.floor(1000 + Math.random() * 9000),
   expectedDelvtime: new Date(Date.now() + 15 * 60000).toISOString(), // +15min
+  status: "Pending",
   createdAt: new Date().toISOString(),
 };
 
@@ -207,6 +208,60 @@ app.post("/api/orders", async (req, res) => {
   } catch (err) {
     console.error("Error creating order:", err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/orders/pending", async (req, res) => {
+  try {
+    const params = {
+      TableName: "orders",
+      FilterExpression: "#status = :statusVal",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: { ":statusVal": "Pending" },
+    };
+
+    const data = await ddb.send(new ScanCommand(params));
+    res.json(data.Items || []);
+  } catch (err) {
+    console.error("🔥 Detailed Error:", err);
+    res.status(400).json({ message: "Bad Request", error: err.message });
+  }
+});
+app.post("/api/orders/verify", async (req, res) => {
+  let { orderId, otp } = req.body;
+
+  try {
+    // ✅ Convert to number because DynamoDB key type is Number
+    const orderKey = Number(orderId);
+
+    // Fetch order
+    const orderData = await ddb.send(
+      new GetCommand({
+        TableName: "orders",
+        Key: { orderno: orderKey },
+      })
+    );
+
+    const order = orderData.Item;
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (String(order.otp) !== String(otp)) {
+  return res.status(400).json({ message: "Invalid OTP" });
+}
+
+    // Update order status
+    await ddb.send(
+      new UpdateCommand({
+        TableName: "orders",
+        Key: { orderno: orderKey },
+        UpdateExpression: "SET #status = :verified",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":verified": "Verified" },
+      })
+    );
+
+    res.json({ message: "Order verified successfully" });
+  } catch (err) {
+    console.error("Error verifying order:", err);
+    res.status(500).json({ message: "Error verifying order" });
   }
 });
 // =======================
@@ -328,6 +383,55 @@ app.post("/api/items", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+// =======================
+// FETCH PENDING ORDERS
+// =======================
+
+
+
+
+
+// =======================
+// VERIFY ORDER (via OTP)
+// =======================
+app.post("/api/orders/verify", async (req, res) => {
+  let { orderId, otp } = req.body;
+
+  try {
+    // ✅ Convert to number because DynamoDB key type is Number
+    const orderKey = Number(orderId);
+
+    // Fetch order
+    const orderData = await ddb.send(
+      new GetCommand({
+        TableName: "orders",
+        Key: { orderno: orderKey },
+      })
+    );
+
+    const order = orderData.Item;
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (order.otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP" });
+
+    // Update order status
+    await ddb.send(
+      new UpdateCommand({
+        TableName: "orders",
+        Key: { orderno: orderKey },
+        UpdateExpression: "SET #status = :verified",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":verified": "Verified" },
+      })
+    );
+
+    res.json({ message: "Order verified successfully" });
+  } catch (err) {
+    console.error("Error verifying order:", err);
+    res.status(500).json({ message: "Error verifying order" });
+  }
+});
+
 
 // =======================
 // SERVER START

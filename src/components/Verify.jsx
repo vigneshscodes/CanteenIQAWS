@@ -4,29 +4,23 @@ export default function Verify() {
   const [orders, setOrders] = useState([]);
   const [enteredOtps, setEnteredOtps] = useState({});
 
-  // Fetch pending orders on load
+  // Fetch pending orders
   useEffect(() => {
-  fetch("http://localhost:5000/api/orders/pending")
-    .then((res) => res.json())
-    .then((data) => {
-      if (Array.isArray(data)) setOrders(data);
-      else setOrders([]); // prevent crash
-    })
-    .catch((err) => {
-      console.error("Error fetching orders:", err);
-      setOrders([]);
-    });
-}, []);
+    fetch("http://localhost:5000/api/orders/pending")
+      .then((res) => res.json())
+      .then((data) => Array.isArray(data) ? setOrders(data) : setOrders([]))
+      .catch((err) => {
+        console.error("Error fetching orders:", err);
+        setOrders([]);
+      });
+  }, []);
 
-
-  // Handle OTP input
-  const handleOtpChange = (id, value) => {
-    setEnteredOtps((prev) => ({ ...prev, [id]: value }));
+  const handleOtpChange = (orderno, value) => {
+    setEnteredOtps((prev) => ({ ...prev, [orderno]: value }));
   };
 
-  // Verify order by OTP
-  const verifyOrder = async (orderId) => {
-    const otp = enteredOtps[orderId];
+  const verifyOrder = async (orderno) => {
+    const otp = enteredOtps[orderno];
     if (!otp) {
       alert("Please enter OTP first!");
       return;
@@ -36,13 +30,13 @@ export default function Verify() {
       const res = await fetch("http://localhost:5000/api/orders/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, otp }),
+        body: JSON.stringify({ orderId: orderno, otp }),
       });
       const data = await res.json();
 
       if (res.ok) {
         alert("✅ Order verified successfully!");
-        setOrders((prev) => prev.filter((o) => o._id !== orderId)); // remove verified one
+        setOrders((prev) => prev.filter((o) => o.orderno !== orderno));
       } else {
         alert(`❌ ${data.message}`);
       }
@@ -61,27 +55,31 @@ export default function Verify() {
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {orders.map((order) => (
             <div
-              key={order._id}
+              key={order.orderno}
               className="bg-[#dbd9d5] rounded-2xl shadow-md p-5 border border-[#b94419]/30"
             >
               <h3 className="text-xl font-bold text-[#56473a] mb-2">
                 Token #{order.tokenno}
               </h3>
               <p className="text-sm mb-2">
-                Customer: <span className="font-semibold">{order.userId?.fullname}</span>
+                Customer: <span className="font-semibold">{order.userEmail}</span>
               </p>
               <p className="text-sm mb-2">
-                Type: <span className="font-semibold">{order.ordertype}</span>
+                Total: ₹{order.total}
               </p>
               <p className="text-sm mb-2">
-                Total: ₹{order.totalamt}
+                Counter No: <span className="font-semibold">{order.counterno}</span>
+              </p>
+              <p className="text-sm mb-2">
+                Expected Time:{" "}
+                <span className="font-semibold">
+                  {new Date(order.expectedDelvtime).toLocaleTimeString()}
+                </span>
               </p>
               <p className="text-sm mb-3 font-semibold">Items:</p>
               <ul className="text-sm text-[#56473a] mb-4">
                 {order.items.map((it, i) => (
-                  <li key={i}>
-                    {it.name} × {it.quantity}
-                  </li>
+                  <li key={i}>{it.name} × {it.quantity}</li>
                 ))}
               </ul>
 
@@ -89,12 +87,12 @@ export default function Verify() {
                 type="text"
                 placeholder="Enter OTP"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
-                value={enteredOtps[order._id] || ""}
-                onChange={(e) => handleOtpChange(order._id, e.target.value)}
+                value={enteredOtps[order.orderno] || ""}
+                onChange={(e) => handleOtpChange(order.orderno, e.target.value)}
               />
 
               <button
-                onClick={() => verifyOrder(order._id)}
+                onClick={() => verifyOrder(order.orderno)}
                 className="w-full bg-[#b94419] text-white py-2 rounded-xl hover:bg-[#a53a15] transition"
               >
                 Verify
