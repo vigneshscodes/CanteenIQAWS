@@ -19,7 +19,7 @@ export default function Management1() {
 
   const defaultImg = "/images/grapejuice.jpeg";
 
-  // Fetch items from DB
+  // Fetch items from DynamoDB
   useEffect(() => {
     fetch("http://localhost:5000/api/items")
       .then((res) => res.json())
@@ -27,11 +27,11 @@ export default function Management1() {
       .catch((err) => console.error("Error fetching items:", err));
   }, []);
 
-  // Update quantity in DB
+  // Update quantity in DynamoDB
   const handleQtyChange = async (id, qty) => {
     setMenuItems(
       menuItems.map((item) =>
-        item._id === id ? { ...item, availableQty: qty } : item
+        item.id === id ? { ...item, availableQty: qty } : item
       )
     );
 
@@ -43,11 +43,11 @@ export default function Management1() {
       });
     } catch (err) {
       console.error("Error updating quantity:", err);
-      alert("Failed to update quantity in DB");
+      alert("Failed to update quantity in DynamoDB");
     }
   };
 
-  // Add new item to DB
+  // Add new item to DynamoDB
   const handleAddItem = async () => {
     if (!newItem.trim()) return;
 
@@ -56,6 +56,7 @@ export default function Management1() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: Date.now().toString(),
           name: newItem,
           availableQty: 0,
           imgurl: defaultImg,
@@ -68,7 +69,7 @@ export default function Management1() {
       setNewItem("");
     } catch (err) {
       console.error("Error adding item:", err);
-      alert("Failed to add item to DB");
+      alert("Failed to add item to DynamoDB");
     }
   };
 
@@ -90,7 +91,7 @@ export default function Management1() {
           type="number"
           min="0"
           value={item.availableQty || 0}
-          onChange={(e) => handleQtyChange(item._id, e.target.value)}
+          onChange={(e) => handleQtyChange(item.id, e.target.value)}
           className="w-20 text-center border border-[#b94419]/50 rounded-lg px-2 py-1 text-[#56473a] bg-[#dbd9d5] focus:border-[#199b74] focus:ring-2 focus:ring-[#199b74]/50 outline-none transition-all duration-200 hover:border-[#199b74] shadow-inner"
         />
       </div>
@@ -118,7 +119,7 @@ export default function Management1() {
         </nav>
       </header>
 
-      {/* Section: Today's Menu */}
+      {/* Today's Menu */}
       <section id="menu" className="px-10 py-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold text-[#56473a]">Add Items to Today’s Menu</h2>
@@ -139,10 +140,10 @@ export default function Management1() {
         <div className="flex overflow-x-auto gap-6 pb-4 no-scrollbar">
           <div className="flex gap-6 overflow-visible">
             {filteredMenu.map((item) => (
-              <Card key={item._id} item={item} />
+              <Card key={item.id} item={item} />
             ))}
 
-            {/* Add new item card */}
+            {/* Add new item */}
             <div className="flex flex-col justify-center items-center bg-[#199b74]/20 border border-[#199b74]/40 rounded-2xl p-6 w-52 text-center shadow-md hover:bg-[#199b74]/30 transition">
               <input
                 type="text"
@@ -200,7 +201,7 @@ export default function Management1() {
       </section>
 
       {/* 🆕 Section: Order History & Analytics */}
-      <section id="analytics" className="px-10 py-8 bg-[#e5b141]/20">
+      {/*<section id="analytics" className="px-10 py-8 bg-[#e5b141]/20">
         <h2 className="text-2xl font-bold text-[#56473a] mb-6 text-center">
           Order History & Analytics
         </h2>
@@ -210,11 +211,11 @@ export default function Management1() {
         >
           See Order History & Analytics →
         </div>
-      </section>
+      </section>*/}
 
       {/* Footer */}
       <footer className="text-center py-4 text-[#56473a]/80 text-sm bg-[#e5b141]/30">
-        CanteenIQ — Management Portal • Smart Canteen System
+        CanteenIQ — Smart Canteen Ordering System - AWS Project
       </footer>
     </div>
   );

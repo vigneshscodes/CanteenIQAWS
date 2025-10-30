@@ -432,7 +432,7 @@ export default function User1() {
       )}
 
       <footer className="text-center py-4 text-[#56473a]/80 text-sm bg-[#e5b141]/30">
-        CanteenIQ — Smart Canteen Ordering System - A Database Systems Project
+        CanteenIQ — Smart Canteen Ordering System - AWS Project
       </footer>
     </div>
   );

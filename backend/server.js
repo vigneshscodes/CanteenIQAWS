@@ -263,6 +263,71 @@ app.post("/api/transactions", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+// =======================
+// MANAGER LOGIN
+// =======================
+app.post("/api/managers/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await ddb.send(
+      new GetCommand({ TableName: "managers", Key: { email } })
+    );
+
+    const manager = result.Item;
+    if (!manager) return res.status(400).json({ message: "Invalid email or password" });
+
+    // If your manager passwords are hashed, use bcrypt.compare
+    // If stored as plain text (for testing), use simple comparison:
+    const isMatch = manager.passwordhash.startsWith("$2b$")
+      ? await bcrypt.compare(password, manager.passwordhash)
+      : password === manager.passwordhash;
+
+    if (!isMatch) return res.status(400).json({ message: "Invalid email or password" });
+
+    const token = jwt.sign({ email: manager.email, role: "manager" }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
+
+    // Update last login
+    await ddb.send(
+      new UpdateCommand({
+        TableName: "managers",
+        Key: { email },
+        UpdateExpression: "set lastlogin = :t",
+        ExpressionAttributeValues: { ":t": new Date().toISOString() },
+      })
+    );
+
+    res.json({
+      message: "Manager login successful",
+      token,
+      manager: {
+        email: manager.email,
+        fullname: manager.fullname,
+        contactnumber: manager.contactnumber,
+      },
+    });
+  } catch (err) {
+    console.error("Error in /api/managers/login:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+// POST new item
+app.post("/api/items", async (req, res) => {
+  try {
+    const { id, name, availableQty, imgurl, price } = req.body;
+
+    if (!id || !name)
+      return res.status(400).json({ message: "id and name required" });
+
+    const newItem = { id, name, availableQty, imgurl, price };
+    await ddb.send(new PutCommand({ TableName: "items", Item: newItem }));
+    res.status(201).json(newItem);
+  } catch (err) {
+    console.error("Error in /api/items POST:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 // =======================
 // SERVER START
